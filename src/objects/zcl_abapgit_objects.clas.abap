@@ -170,14 +170,7 @@ CLASS zcl_abapgit_objects DEFINITION
         !iv_conf_diff_wo_warn   TYPE abap_bool DEFAULT abap_false
       RAISING
         zcx_abapgit_exception .
-    CLASS-METHODS compare_remote_to_local
-      IMPORTING
-        !ii_object TYPE REF TO zif_abapgit_object
-        !it_remote TYPE zif_abapgit_git_definitions=>ty_files_tt
-        !is_result TYPE zif_abapgit_definitions=>ty_result
-        !ii_log    TYPE REF TO zif_abapgit_log
-      RAISING
-        zcx_abapgit_exception .
+
     CLASS-METHODS deserialize_steps
       IMPORTING
         !it_steps     TYPE zif_abapgit_objects=>ty_step_data_tt
@@ -216,11 +209,7 @@ CLASS zcl_abapgit_objects DEFINITION
         !it_tadir       TYPE zif_abapgit_definitions=>ty_tadir_tt
       RETURNING
         VALUE(rt_items) TYPE zif_abapgit_definitions=>ty_items_tt .
-    CLASS-METHODS map_results_to_items
-      IMPORTING
-        !it_results     TYPE zif_abapgit_definitions=>ty_results_tt
-      RETURNING
-        VALUE(rt_items) TYPE zif_abapgit_definitions=>ty_items_tt .
+
     CLASS-METHODS get_deserialize_steps
       RETURNING
         VALUE(rt_steps) TYPE zif_abapgit_objects=>ty_step_data_tt .
@@ -406,78 +395,7 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
   ENDMETHOD.
 
 
-  METHOD compare_remote_to_local.
-* this method is used for comparing local with remote objects
-* before pull, this is useful eg. when overwriting a TABL object.
-* only the main XML file is used for comparison
 
-    DATA: ls_remote_file    TYPE zif_abapgit_git_definitions=>ty_file,
-          li_remote_version TYPE REF TO zif_abapgit_xml_input,
-          lv_count          TYPE i,
-          ls_result         TYPE zif_abapgit_comparator=>ty_result,
-          lv_answer         TYPE string,
-          li_comparator     TYPE REF TO zif_abapgit_comparator,
-          ls_item           TYPE zif_abapgit_definitions=>ty_item.
-
-    FIND ALL OCCURRENCES OF '.' IN is_result-filename MATCH COUNT lv_count.
-
-    IF is_result-filename CS '.XML' AND lv_count = 2.
-      IF ii_object->exists( ) = abap_false.
-        RETURN.
-      ENDIF.
-
-      READ TABLE it_remote WITH KEY file
-        COMPONENTS filename = is_result-filename INTO ls_remote_file.
-      IF sy-subrc <> 0. "if file does not exist in remote, we don't need to validate
-        RETURN.
-      ENDIF.
-
-      li_comparator = ii_object->get_comparator( ).
-      IF NOT li_comparator IS BOUND.
-        RETURN.
-      ENDIF.
-
-      CREATE OBJECT li_remote_version
-        TYPE zcl_abapgit_xml_input
-        EXPORTING
-          iv_xml      = zcl_abapgit_convert=>xstring_to_string_utf8( ls_remote_file-data )
-          iv_filename = ls_remote_file-filename.
-
-      ls_result = li_comparator->compare( ii_remote = li_remote_version
-                                          ii_log = ii_log ).
-      IF ls_result-text IS INITIAL.
-        RETURN.
-      ENDIF.
-
-      "log comparison result
-      ls_item-obj_type = is_result-obj_type.
-      ls_item-obj_name = is_result-obj_name.
-      ii_log->add_warning( iv_msg = ls_result-text
-                           is_item = ls_item ).
-
-      "continue or abort?
-      IF zcl_abapgit_ui_factory=>get_frontend_services( )->gui_is_available( ) = abap_true.
-        lv_answer = zcl_abapgit_ui_factory=>get_popups( )->popup_to_confirm(
-          iv_titlebar              = 'Warning'
-          iv_text_question         = ls_result-text
-          iv_text_button_1         = 'Pull Anyway'
-          iv_icon_button_1         = 'ICON_OKAY'
-          iv_text_button_2         = 'Cancel'
-          iv_icon_button_2         = 'ICON_CANCEL'
-          iv_default_button        = '2'
-          iv_display_cancel_button = abap_false ).
-
-        IF lv_answer = '2'.
-          zcx_abapgit_exception=>raise( |Deserialization for object { is_result-obj_name } | &
-                                        |(type { is_result-obj_type }) aborted by user| ).
-        ENDIF.
-      ELSE.
-        zcx_abapgit_exception=>raise( |Deserialization for object { is_result-obj_name } | &
-                                      |(type { is_result-obj_type }) aborted, user descision required| ).
-      ENDIF.
-    ENDIF.
-
-  ENDMETHOD.
 
 
   METHOD create_object.
@@ -670,8 +588,8 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
     DATA lv_transport TYPE trkorr.
     DATA lt_results  TYPE zif_abapgit_definitions=>ty_results_tt.
     DATA lr_result TYPE REF TO zif_abapgit_definitions=>ty_result.
-    DATA lt_deserialized_objects  TYPE zcl_abapgit_objects=>ty_deserialization_tt.
-    DATA ls_deserialized_object  TYPE zcl_abapgit_objects=>ty_deserialization.
+    DATA lt_deserialized_objects  TYPE ty_deserialization_tt.
+    DATA ls_deserialized_object  TYPE ty_deserialization.
     DATA lo_files    TYPE REF TO zcl_abapgit_objects_files.
     DATA ls_item     TYPE zif_abapgit_definitions=>ty_item.
     DATA lv_path TYPE string.
@@ -700,11 +618,11 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
       CHANGING
         ct_results = lt_results ).
 
-    lt_deserialized_objects = zcl_abapgit_objects=>get_deserialized_objects(
+    lt_deserialized_objects = get_deserialized_objects(
       it_remote   = lt_remote
       it_results  = lt_results ).
 
-    zcl_abapgit_objects=>deserialize_objs(
+    deserialize_objs(
       EXPORTING
         iv_top_package    = io_repo->get_package( )
         iv_transport            = lv_transport
@@ -1015,24 +933,6 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
     ENDIF.
 
   ENDMETHOD.
-
-
-  METHOD map_results_to_items.
-
-    DATA: ls_item LIKE LINE OF rt_items.
-    FIELD-SYMBOLS: <ls_result> TYPE zif_abapgit_definitions=>ty_result.
-
-    LOOP AT it_results ASSIGNING <ls_result>.
-
-      ls_item-devclass = <ls_result>-package.
-      ls_item-obj_type = <ls_result>-obj_type.
-      ls_item-obj_name = <ls_result>-obj_name.
-      INSERT ls_item INTO TABLE rt_items.
-
-    ENDLOOP.
-
-  ENDMETHOD.
-
 
   METHOD map_tadir_to_items.
 
