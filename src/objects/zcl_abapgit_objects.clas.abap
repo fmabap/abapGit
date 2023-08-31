@@ -395,9 +395,6 @@ CLASS zcl_abapgit_objects IMPLEMENTATION.
   ENDMETHOD.
 
 
-
-
-
   METHOD create_object.
 
     DATA: lv_message            TYPE string,
